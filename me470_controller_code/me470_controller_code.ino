@@ -11,7 +11,6 @@ rostopic pub servo std_msgs/UInt16 30
 #endif
 
 #include <VarSpeedServo.h> 
-//#include <Servo.h>
 #include <AccelStepper.h>
 #include <ros.h>
 #include <std_msgs/Bool.h>
@@ -30,13 +29,13 @@ rostopic pub servo std_msgs/UInt16 30
 #define Step_1_PUL 8
 #define Linear_1_PIN 10
 #define Switch_1_PIN 52
+#define Loading_1_PIN 10000
 
 
 
 /*********************************
 *******set up global Variable*****
 **********************************/
-ros::NodeHandle  nh;
 
 
 VarSpeedServo servo_1;
@@ -48,71 +47,73 @@ AccelStepper* stepper_list[N_module]={&stepper_1};
 
 int switch_PIN_list[N_module]={Switch_1_PIN};
 
-
-int pressSwitch = 0;
-bool one_module_ready=0;
-int wait_command=0;
 int module_process=0;
-
 int linearValue=0;
 unsigned long time=0;
 unsigned long time_count=0;
 
-int delivery_switch=1;
+
+enum Status{
+  DISCONNECTED=0,
+  WAIT_FOR_INIT=1,
+  LOADING=2,
+  READY_FOR_DEL=3,
+  DELIVERING=4,
+  DELIVERED=5,
+  FAILED=6
+};
+
+Status system_status=DISCONNECTED;
 
 
 
 /*********************************
 *************ROS Handles**********
 **********************************/
-
-std_msgs::Bool init_finished;
-bool init_start = 0;
-
+ros::NodeHandle  nh;
 std_msgs::Bool delivery_finished;
-bool delivery_request=0;
-bool delivery_start = 0;
+std_msgs::UInt16 status_msg;
 
+
+
+
+
+/*********************************
+**********ROS Subscriber**********
+**********************************/
 
 void messageInit( const std_msgs::Bool& init_msg){
-  if(init_start==0)
+
+  if(system_status==DISCONNECTED)
   {
-    init_finished.data=0;
-    init_start=init_msg.data;
+    system_status=WAIT_FOR_INIT;
   }
 }
 
-void messageDelivery( const std_msgs::Bool& delivery_msg){
-  if( delivery_request==0)
-  {        
-    digitalWrite(LED_BUILTIN, HIGH);
-    delivery_start=0;
-    delivery_request=delivery_msg.data;
-  }
-}
-
-void servo_cb( const std_msgs::UInt16& servo){
-  if(delivery_request==1 && delivery_start==0){
+void servo_cb(const std_msgs::UInt16& servo){
+  if(system_status==READY_FOR_DEL){
     linearValue = map(servo.data, 0, 300, 0, 180);
-    if(linearValue!=0)
+    if(linearValue>=0)
     {
       delivery_finished.data=0;
-      delivery_start=1;
       digitalWrite(LED_BUILTIN, LOW);
+      system_status=DELIVERING;
+    }
+    else
+    {
+      linearValue=0;
     }
   }
-  else if(delivery_request==0)
-    linearValue = 0;
 }
 
 
-ros::Subscriber<std_msgs::Bool> sub1("init_msg", &messageInit);
-ros::Subscriber<std_msgs::UInt16> sub2("servo", servo_cb);
-ros::Subscriber<std_msgs::Bool> sub3("delivery_msg", &messageDelivery);
+ros::Subscriber<std_msgs::Bool> sub1("/cart_msg/init_request", &messageInit);
+ros::Subscriber<std_msgs::UInt16> sub2("/cart_msg/deliver_request", servo_cb);
 
 
-ros::Publisher init_done("init_done", &init_finished);
-ros::Publisher delivery_done("delivery_done", &delivery_finished);
+ros::Publisher delivery_done("/cart_msg/delivery_done", &delivery_finished);
+ros::Publisher status_pub("/cart_msg/cart_status", &status_msg);
+
 
 void setup()
 {  
@@ -124,25 +125,32 @@ void setup()
   //servo_1.attach(Linear_1_PIN,LINEAR_MIN,LINEAR_MAX);
 
   pinMode(LED_BUILTIN, OUTPUT);
+
   //ros init
-  init_finished.data=0;
+  
   delivery_finished.data=0;
+  status_msg.data=0;
   
   nh.initNode();
   nh.subscribe(sub1);
   nh.subscribe(sub2);
-  nh.subscribe(sub3);
-  nh.advertise(init_done);
+  
   nh.advertise(delivery_done);
+  nh.advertise(status_pub);
 }
 
-void module_init(AccelStepper *stepper, VarSpeedServo *servo, int switch_PIN,int Liner_pin)
+// initialization stage
+
+int pressSwitch = 0;
+bool one_module_ready=0;
+
+void module_init(AccelStepper *stepper, VarSpeedServo *servo, int switch_PIN,int Linear_pin)
 {
   //linear servo pin set up
   if(!(servo->attached()))
   {
     digitalWrite(LED_BUILTIN, HIGH);
-    servo->attach(Liner_pin,LINEAR_MIN,LINEAR_MAX);
+    servo->attach(Linear_pin,LINEAR_MIN,LINEAR_MAX);
   }
   //return the servo to 0
   if(servo->read())
@@ -163,8 +171,12 @@ void module_init(AccelStepper *stepper, VarSpeedServo *servo, int switch_PIN,int
   }
 }
 
+// delivery stage state machine
+
 bool deliver_pushed=0;
 bool deliver_retrived=0;
+int delivery_switch=1;
+
 
 void module_delivery(AccelStepper *stepper, VarSpeedServo *servo)
 {
@@ -218,7 +230,8 @@ void loop()
 {
   time=millis(); 
   //initialization state
-  if(init_finished.data==0 && init_start==1)
+  //if(init_finished.data==0 && init_start==1)
+  if(system_status==WAIT_FOR_INIT)
   {
     if(module_process<N_module)
     {
@@ -230,17 +243,14 @@ void loop()
       }
     }
     else{
-      init_finished.data=1;
+      system_status=READY_FOR_DEL;
       module_process=0;
       digitalWrite(LED_BUILTIN, LOW);
     }
   }
 
-  init_done.publish(&init_finished);
-  
-
   //delivery_stage
-  if(init_finished.data==1 && delivery_request==1 && delivery_start==1 && delivery_finished.data==0)
+  if(system_status==DELIVERING)
   {
     if(module_process<N_module)
     {
@@ -254,16 +264,29 @@ void loop()
     }
     else{
       delivery_finished.data=1;
-      delivery_request=0;
-      delivery_start=0;
-      module_process=0;
+      system_status=DELIVERED;
+      time_count=time;
       digitalWrite(LED_BUILTIN, LOW);
     }
   }
 
-  delivery_done.publish(&delivery_finished);
-  nh.spinOnce();
+  //Send Delivery message for 5 seconds
+  if(system_status==DELIVERED && (time-time_count)<5000)
+  {
+    delivery_done.publish(&delivery_finished);
+  }
+  else if(system_status==DELIVERED)
+  {
+    system_status==READY_FOR_DEL;
+    delivery_finished.data=0;
+    
+  }
 
+  //publish status state of the cart
+  status_msg.data=system_status;
+  status_pub.publish(status_msg);
+
+  nh.spinOnce();
 }
 
 

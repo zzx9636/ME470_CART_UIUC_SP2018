@@ -35,7 +35,7 @@ april_detector::~april_detector()
     cv::destroyWindow("April tags Detecion");
 }
 
-void april_detector::detection(cv::Mat gray)
+void april_detector::detection(cv::Mat & gray)
 {
     image_u8_t im = { .width = gray.cols,
     .height = gray.rows,
@@ -49,7 +49,7 @@ void april_detector::detection(cv::Mat gray)
     zarray_destroy(detections);
 }
 
-float april_detector::detection_distance(cv::Mat gray, int target_id)
+float april_detector::detection_distance(cv::Mat & gray, int target_id)
 {
     image_u8_t im = { .width = gray.cols,
     .height = gray.rows,
@@ -78,7 +78,7 @@ float april_detector::detection_distance(cv::Mat gray, int target_id)
     {
         std::cout<<"No target tag detected"<<std::endl;
     }
-    detection_show(detections,gray);
+    //detection_show(detections,gray);
     zarray_destroy(detections);
 
     return distance;

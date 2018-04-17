@@ -21,9 +21,9 @@ public:
     april_detector();
     ~april_detector();
 
-    void detection(cv::Mat gray);
+    void detection(cv::Mat & gray);
     void detection_show(zarray_t * detections,cv::Mat & frame);
-    float detection_distance(cv::Mat gray,int target_id);
+    float detection_distance(cv::Mat & gray,int target_id);
 
     
 private:
