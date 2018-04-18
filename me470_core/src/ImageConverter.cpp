@@ -25,5 +25,5 @@ catch (cv_bridge::Exception& e)
 
 cvtColor(cv_ptr->image, gray, cv::COLOR_RGB2GRAY);
 
-Detector.detection(gray);
+current_dis=Detector.detection_distance(gray,1);
 }

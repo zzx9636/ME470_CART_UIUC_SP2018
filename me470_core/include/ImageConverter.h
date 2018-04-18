@@ -18,6 +18,7 @@ public:
   void ros2cv(const sensor_msgs::ImageConstPtr& msg);  
   cv::Mat gray;
   april_detector Detector;
+  float current_dis;
 
 
 private: 

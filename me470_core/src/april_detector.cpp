@@ -73,12 +73,13 @@ float april_detector::detection_distance(cv::Mat & gray, int target_id)
     {
         float pixel_difference=sqrt(1.0*(((target_det->p[3][0])-(target_det->p[0][0]))*((target_det->p[3][0])-(target_det->p[0][0]))+
             ((target_det->p[3][1])-(target_det->p[0][1]))*((target_det->p[3][1])-(target_det->p[0][1]))));
-        distance = (Focus*16.0)/pixel_difference-Cart_Length;
+        distance = (Focus*16.0)/pixel_difference;
+        
     }else
     {
-        std::cout<<"No target tag detected"<<std::endl;
+        
     }
-    //detection_show(detections,gray);
+    detection_show(detections,gray);
     zarray_destroy(detections);
 
     return distance;

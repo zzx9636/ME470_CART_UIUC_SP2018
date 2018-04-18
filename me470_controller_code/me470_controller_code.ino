@@ -29,7 +29,7 @@ rostopic pub servo std_msgs/UInt16 30
 #define Step_1_PUL 8
 #define Linear_1_PIN 10
 #define Switch_1_PIN 52
-#define Loading_1_PIN 10000
+#define Loading_1_PIN 50
 
 
 
@@ -46,11 +46,17 @@ AccelStepper stepper_1(1, Step_1_PUL,Step_1_DIR);
 AccelStepper* stepper_list[N_module]={&stepper_1};
 
 int switch_PIN_list[N_module]={Switch_1_PIN};
+int loading_PIN_list[N_module]={Loading_1_PIN};
+//int last_loading_read[N_module];
+int current_loading_module=-1;
+bool loading_retrive=0;
 
 int module_process=0;
 int linearValue=0;
 unsigned long time=0;
 unsigned long time_count=0;
+
+int time_to_wait=25000;
 
 
 enum Status{
@@ -75,16 +81,13 @@ std_msgs::Bool delivery_finished;
 std_msgs::UInt16 status_msg;
 
 
-
-
-
 /*********************************
 **********ROS Subscriber**********
 **********************************/
 
 void messageInit( const std_msgs::Bool& init_msg){
 
-  if(system_status==DISCONNECTED)
+  if(system_status==DISCONNECTED && init_msg.data)
   {
     system_status=WAIT_FOR_INIT;
   }
@@ -93,11 +96,18 @@ void messageInit( const std_msgs::Bool& init_msg){
 void servo_cb(const std_msgs::UInt16& servo){
   if(system_status==READY_FOR_DEL){
     linearValue = map(servo.data, 0, 300, 0, 180);
-    if(linearValue>=0)
+    if(linearValue>0)
     {
       delivery_finished.data=0;
       digitalWrite(LED_BUILTIN, LOW);
       system_status=DELIVERING;
+      double temp=((double)linearValue)/180.0*25000.0;
+      if(temp>25000)
+        temp=25000;
+      else if(temp<4000)
+        temp=4000;
+
+      time_to_wait=(int) (temp+2000.0);
     }
     else
     {
@@ -121,8 +131,6 @@ void setup()
   stepper_1.setMaxSpeed(10000);//1100
   stepper_1.setAcceleration(200);
   stepper_1.setSpeed(1000);//should be more than 75 rpm=1.25 rps  
-
-  //servo_1.attach(Linear_1_PIN,LINEAR_MIN,LINEAR_MAX);
 
   pinMode(LED_BUILTIN, OUTPUT);
 
@@ -149,14 +157,16 @@ void module_init(AccelStepper *stepper, VarSpeedServo *servo, int switch_PIN,int
   //linear servo pin set up
   if(!(servo->attached()))
   {
-    digitalWrite(LED_BUILTIN, HIGH);
     servo->attach(Linear_pin,LINEAR_MIN,LINEAR_MAX);
   }
   //return the servo to 0
   if(servo->read())
   {
+    digitalWrite(LED_BUILTIN, HIGH);
     servo->write(0,0,0);
     time_count=time;
+    delay(50);
+    digitalWrite(LED_BUILTIN, LOW);
   }else if((time-time_count)>25000){
     pressSwitch = digitalRead(switch_PIN);
     if(pressSwitch == HIGH)
@@ -191,7 +201,7 @@ void module_delivery(AccelStepper *stepper, VarSpeedServo *servo)
       break;
 
     case 2: //wait linear servo reached its location, and drive pusher
-      if((time-time_count)>30000)
+      if((time-time_count)>time_to_wait)
       {
         stepper->moveTo(3000);
         delivery_switch=3;
@@ -205,14 +215,14 @@ void module_delivery(AccelStepper *stepper, VarSpeedServo *servo)
       {
         deliver_pushed=1;
         time_count=time;
-      }else if(deliver_pushed==1 & deliver_retrived ==0 & (time-time_count)>5000)
+      }else if(deliver_pushed==1 & deliver_retrived ==0 & (time-time_count)>3000)
       {
         stepper->moveTo(0);
         stepper->setSpeed(-6000);
         servo->write(0,0,0);
         deliver_retrived=1;
         time_count=time;
-      }else if(deliver_retrived==1 && (stepper->currentPosition())==(stepper->targetPosition()) && (time-time_count)>30000)
+      }else if(deliver_retrived==1 && (stepper->currentPosition())==(stepper->targetPosition()) && (time-time_count)>time_to_wait)
       {
         one_module_ready=1;
       }else
@@ -229,8 +239,11 @@ void module_delivery(AccelStepper *stepper, VarSpeedServo *servo)
 void loop()
 {
   time=millis(); 
+
+
+
+  
   //initialization state
-  //if(init_finished.data==0 && init_start==1)
   if(system_status==WAIT_FOR_INIT)
   {
     if(module_process<N_module)
@@ -265,26 +278,61 @@ void loop()
     else{
       delivery_finished.data=1;
       system_status=DELIVERED;
+      time_to_wait=25000;
       time_count=time;
       digitalWrite(LED_BUILTIN, LOW);
     }
   }
 
   //Send Delivery message for 5 seconds
-  if(system_status==DELIVERED && (time-time_count)<5000)
+  if(system_status==DELIVERED && (time-time_count)<3000)
   {
     delivery_done.publish(&delivery_finished);
+    digitalWrite(LED_BUILTIN, LOW);
   }
   else if(system_status==DELIVERED)
   {
-    system_status==READY_FOR_DEL;
+    digitalWrite(LED_BUILTIN, HIGH);
+    module_process=0;
+    system_status=READY_FOR_DEL;
     delivery_finished.data=0;
     
   }
 
+  if(system_status==READY_FOR_DEL)
+  {
+    for(int i=0; i<N_module; i++)
+    {
+     int current_read=digitalRead(loading_PIN_list[i]);
+     if(current_read==1) //turn on loading
+     {
+      system_status=LOADING;
+      (servo_list[i])->write(300,0,0);
+      current_loading_module=i;
+      break;
+     } 
+    }
+  }
+
+  if(system_status==LOADING)
+  {
+    int current_read=digitalRead(loading_PIN_list[current_loading_module]);
+    if((!loading_retrive) && current_read==0)
+    {
+      loading_retrive=1;
+      (servo_list[current_loading_module])->write(0,0,0);
+      time_count=time;
+    }else if(loading_retrive && (time-time_count)>25000)
+    {
+      loading_retrive=0;
+      system_status=READY_FOR_DEL;
+      current_loading_module=-1;
+    }
+  }
+
   //publish status state of the cart
   status_msg.data=system_status;
-  status_pub.publish(status_msg);
+  status_pub.publish(&status_msg);
 
   nh.spinOnce();
 }

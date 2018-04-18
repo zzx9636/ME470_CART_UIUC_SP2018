@@ -5,7 +5,7 @@
 
 #include "../include/ImageConverter.h"
 #include "../include/april_detector.h"
-#include "../include/node_io.h"
+#include "../include/cart_state.h"
 
 #include "ros/ros.h"
 #include <std_msgs/Bool.h>
@@ -28,6 +28,10 @@ Following are publisher
 ros::Publisher linear_servo_pub;
 ros::Publisher init_request_pub;
 
+
+std_msgs::Bool msg_init_pub;
+
+
 /*
 Following are subscriber function
 */
@@ -47,26 +51,24 @@ void deliver_status_sub(const std_msgs::UInt16 & msg)
 	{
 		case 0: // fresh start
 			Cart.set_init(false);
-			std_msgs::Bool msg2pub;
-			msg2pub.data=1;
-			init_request_pub.publish(msg2pub);
+			msg_init_pub.data=1;
+			init_request_pub.publish(msg_init_pub);
 			break;
 
 		case 1: // robot has not been initalized
-			std_msgs::Bool msg2pub;
-			msg2pub.data=1;
-			init_request_pub.publish(msg2pub);
+			msg_init_pub.data=1;
+			init_request_pub.publish(msg_init_pub);
 			break;
 
 		case 2: //robot is loading	
 			Cart.set_loading(true);
 			break;
 
-		case 3: //ready for delivery after loading
+		case 3: //ready for delivery
 			if(!Cart.is_init())
 				Cart.set_init(true);
 			else if(!Cart.is_cart_ready())
-				Cart.reset_deliverd();
+				Cart.reset_delivery();
 			break;
 
 		case 4: //robot received the deliver message
@@ -99,11 +101,20 @@ void waypoint_reached_sub(const std_msgs::Bool& msg)
 	{
 		if(msg.data)//if the waypoint has been arrived
 		{
-			float linear_distance = 10.0*(ic_ptr->Detector).detection_distance(ic_ptr->gray,0);
-			if(linear_distance!=-1){//target tag detected
+			//float linear_distance = (ic_ptr->Detector).detection_distance(ic_ptr->gray,1);
+			float linear_distance = 10.0*(ic_ptr->current_dis-50.0);
+			if(linear_distance>=0){//target tag detected
 				std_msgs::UInt16 linear2pub;
-				linear2pub.data=(int) linear_distance;
+				if(linear_distance>300)
+					linear2pub.data=300;
+				else
+					linear2pub.data=(int)linear_distance;
 				linear_servo_pub.publish(linear2pub);
+				std::cout<<"Detected "<<linear_distance<<" mm. Extend the linear servo "<<linear2pub.data<<" mm"<<std::endl;
+		  	}
+		  	else
+		  	{
+		  		std::cout<<"No target tag detected"<<std::endl;
 		  	}
 		}
 	}
@@ -122,8 +133,6 @@ int main(int argc, char** argv)
 
   ros::Subscriber sub1 = n.subscribe("/cart_msg/cart_status",1,deliver_status_sub);
   ros::Subscriber sub2 = n.subscribe("/cart_bot_msg/waypoint_reached",1,waypoint_reached_sub);
-
-  
 
   ros::spin();
   return 0;

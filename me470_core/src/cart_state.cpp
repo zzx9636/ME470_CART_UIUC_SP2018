@@ -17,7 +17,7 @@ void cart_state::set_init(bool input)
 	{
 		cout<<"Cart Initialization Done"<<endl;
 		system_status=READY_FOR_DEL;
-		this->reset_deliverd();
+		this->reset_delivery();
 	}else
 		system_status=WAIT_FOR_INIT;
 }
@@ -38,7 +38,7 @@ void cart_state::set_deliver_start(bool input)
 		this->deliver_start=true;
 		this->delivered=false;
 		this->ready_for_deliver=false;
-		system_status=DELIVERING；
+		system_status=DELIVERING;
 	}
 }
 
